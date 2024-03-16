@@ -66,9 +66,9 @@ func makecolorbars() *image.YCbCr {
 func getSystemLibrary() string {
 	switch runtime.GOOS {
 	case "windows":
-		return "openh264-2.3.1-win64.dll"
+		return "openh264-2.4.1-win64.dll"
 	default:
-		return "./libopenh264-2.3.1-linux64.7.so"
+		return "./libopenh264-2.4.1-linux64.7.so"
 	}
 }
 func TestMain(m *testing.M) {
@@ -87,7 +87,8 @@ func TestMain(m *testing.M) {
 }
 
 func TestEncodeDecode(t *testing.T) {
-
+	pinner := &runtime.Pinner{}
+	defer pinner.Unpin()
 	img := makecolorbars()
 	//Encode
 	var ppEnc *ISVCEncoder
@@ -127,6 +128,9 @@ func TestEncodeDecode(t *testing.T) {
 	loop := 960
 	loop = 40
 	for i := 0; i < loop; i++ {
+		pinner.Pin(&img.Y[i*2])
+		pinner.Pin(&img.Cb[i])
+		pinner.Pin(&img.Cr[i])
 		encSrcPic.PData[0] = (*uint8)(unsafe.Pointer(&img.Y[i*2]))
 		encSrcPic.PData[1] = (*uint8)(unsafe.Pointer(&img.Cb[i]))
 		encSrcPic.PData[2] = (*uint8)(unsafe.Pointer(&img.Cr[i]))
@@ -247,7 +251,8 @@ func TestEncodeDecode(t *testing.T) {
 }
 
 func TestEncodeExtDecode(t *testing.T) {
-
+	pinner := &runtime.Pinner{}
+	defer pinner.Unpin()
 	img := makecolorbars()
 
 	var ppEnc *ISVCEncoder
@@ -303,11 +308,14 @@ func TestEncodeExtDecode(t *testing.T) {
 	loop := 960
 	loop = 40
 	for i := 0; i < loop; i++ {
+		pinner.Pin(&img.Y[i*2])
+		pinner.Pin(&img.Cb[i])
+		pinner.Pin(&img.Cr[i])
 		encSrcPic.PData[0] = (*uint8)(unsafe.Pointer(&img.Y[i*2]))
 		encSrcPic.PData[1] = (*uint8)(unsafe.Pointer(&img.Cb[i]))
 		encSrcPic.PData[2] = (*uint8)(unsafe.Pointer(&img.Cr[i]))
 		if i == 5 {
-			if r := ppEnc.ForceIntraFrame(true, 0); r != 0 {
+			if r := ppEnc.ForceIntraFrame(true); r != 0 {
 				t.Fatal("ForceIntraFrame", r)
 			}
 		}
@@ -435,7 +443,8 @@ func TestEncodeExtDecode(t *testing.T) {
 }
 
 func TestEncodeDecodeParser(t *testing.T) {
-
+	pinner := &runtime.Pinner{}
+	defer pinner.Unpin()
 	img := makecolorbars()
 	//Encode
 	var ppEnc *ISVCEncoder
@@ -473,6 +482,9 @@ func TestEncodeDecodeParser(t *testing.T) {
 	encSrcPic.IStride[2] = 960
 	chunk := []int{}
 	for i := 0; i < 4; i++ {
+		pinner.Pin(&img.Y[i*2])
+		pinner.Pin(&img.Cb[i])
+		pinner.Pin(&img.Cr[i])
 		encSrcPic.PData[0] = (*uint8)(unsafe.Pointer(&img.Y[i*2]))
 		encSrcPic.PData[1] = (*uint8)(unsafe.Pointer(&img.Cb[i]))
 		encSrcPic.PData[2] = (*uint8)(unsafe.Pointer(&img.Cr[i]))
@@ -578,5 +590,4 @@ func TestWelsGetCodecVersion(t *testing.T) {
 	if gotVer := WelsGetCodecVersion(); !reflect.DeepEqual(gotVer, ver) {
 		t.Errorf("WelsGetCodecVersion() = %v, want %v", gotVer, ver)
 	}
-
 }

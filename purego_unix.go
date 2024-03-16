@@ -1,4 +1,4 @@
-//go:build darwin || freebsd || linux
+//go:build !cgoopenh264 && (darwin || freebsd || linux)
 
 package openh264
 

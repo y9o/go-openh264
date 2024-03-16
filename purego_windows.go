@@ -1,3 +1,5 @@
+//go:build !cgoopenh264
+
 package openh264
 
 import "golang.org/x/sys/windows"
