@@ -5,7 +5,7 @@
 # go tool cgo -godefs _codec.go > codec_api.go
 #
 use strict;
-my $inc_dir = "inc_openh264_2_3_1";
+my $inc_dir = "inc_openh264";
 
 open my $fh,">","_codec.go" or die $!;
 print $fh <<TXT;
