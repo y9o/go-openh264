@@ -170,15 +170,13 @@ func TestEncodeDecode(t *testing.T) {
 	}
 	defer WelsDestroyDecoder(ppdec)
 
-	var op int = 2
+	var op int = 0
 	ppdec.SetOption(DECODER_OPTION_TRACE_LEVEL, &op)
-	op = 0
-	ppdec.SetOption(DECODER_OPTION_NUM_OF_THREADS, &op)
 
 	sDecParam := SDecodingParam{}
+	sDecParam.SVideoProperty.Size = uint32(unsafe.Sizeof(sDecParam.SVideoProperty))
 	sDecParam.EEcActiveIdc = ERROR_CON_SLICE_MV_COPY_CROSS_IDR_FREEZE_RES_CHANGE
-	var sDstBufInfo SBufferInfo
-
+	sDecParam.SVideoProperty.EVideoBsType = VIDEO_BITSTREAM_DEFAULT
 	if r := ppdec.Initialize(&sDecParam); r != 0 {
 		log.Fatalln("failed Initialize.", r)
 	}
@@ -186,10 +184,12 @@ func TestEncodeDecode(t *testing.T) {
 	dataoffset := 0
 	src := buf.Bytes()
 	fh2 := md5.New()
-	for _, l := range chunk {
+	for i, l := range chunk {
 		data := src[dataoffset : dataoffset+l]
 		dataoffset += l
 		if len(data) > 0 {
+			var sDstBufInfo SBufferInfo
+			sDstBufInfo.UiInBsTimeStamp = uint64(i)
 			var pDst [3][]byte
 			if r := ppdec.DecodeFrameNoDelay(data, len(data), &pDst, &sDstBufInfo); r != 0 {
 				t.Fatal("decode", r)
@@ -198,30 +198,6 @@ func TestEncodeDecode(t *testing.T) {
 				fh2.Write(pDst[0])
 				fh2.Write(pDst[1])
 				fh2.Write(pDst[2])
-				// i := &image.YCbCr{
-				// 	Y:       pDst[0],
-				// 	Cb:      pDst[1],
-				// 	Cr:      pDst[2],
-				// 	YStride: int(sDstBufInfo.UsrData_sSystemBuffer().IStride[0]),
-				// 	CStride: int(sDstBufInfo.UsrData_sSystemBuffer().IStride[1]),
-				// 	Rect: image.Rect(
-				// 		0, 0,
-				// 		int(sDstBufInfo.UsrData_sSystemBuffer().IWidth),
-				// 		int(sDstBufInfo.UsrData_sSystemBuffer().IHeight)),
-				// 	SubsampleRatio: image.YCbCrSubsampleRatio420,
-				// }
-				// fh, err := os.OpenFile("first.jpg", os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
-				// if err != nil {
-				// 	log.Fatalln(err)
-				// }
-
-				// err = jpeg.Encode(fh, i, &jpeg.Options{Quality: 80})
-				// if err != nil {
-				// 	log.Fatalln(err)
-				// }
-				// t.Failed()
-				// fh.Close()
-				// break
 			}
 		}
 
@@ -231,10 +207,11 @@ func TestEncodeDecode(t *testing.T) {
 	ppdec.GetOption(DECODER_OPTION_NUM_OF_FRAMES_REMAINING_IN_BUFFER, &num_of_frames_in_buffer)
 	for i := 0; i < num_of_frames_in_buffer; i++ {
 		var pDst [3][]byte
+		var sDstBufInfo SBufferInfo
 		if r := ppdec.FlushFrame(&pDst, &sDstBufInfo); r != 0 {
 			t.Fatal("err", r)
 		}
-		if pDst[0] != nil {
+		if sDstBufInfo.IBufferStatus == 1 {
 			fh2.Write(pDst[0])
 			fh2.Write(pDst[1])
 			fh2.Write(pDst[2])
@@ -376,8 +353,6 @@ func TestEncodeExtDecode(t *testing.T) {
 
 	var op int = 2
 	ppdec.SetOption(DECODER_OPTION_TRACE_LEVEL, &op)
-	op = 0
-	ppdec.SetOption(DECODER_OPTION_NUM_OF_THREADS, &op)
 
 	sDecParam := SDecodingParam{}
 	sDecParam.EEcActiveIdc = ERROR_CON_SLICE_MV_COPY_CROSS_IDR_FREEZE_RES_CHANGE
@@ -434,6 +409,234 @@ func TestEncodeExtDecode(t *testing.T) {
 	}
 	h2 := fmt.Sprintf("%X", fh2.Sum(nil))
 	switch h2 {
+	case "D86E18760CD1829B11207EB19739AE32": //40
+	case "49272CBC00A8A62EEC1FF66D093CBF3B": //960
+		break
+	default:
+		t.Fatal(h2)
+	}
+}
+
+func TestEncodeExtDecodeNoDelay(t *testing.T) {
+	pinner := &runtime.Pinner{}
+	defer pinner.Unpin()
+	img := makecolorbars()
+
+	var ppEnc *ISVCEncoder
+	if ret := WelsCreateSVCEncoder(&ppEnc); ret != 0 || ppEnc == nil {
+		t.Fatal("failed WelsCreateEncoder:", ret, ppEnc)
+	}
+	defer WelsDestroySVCEncoder(ppEnc)
+
+	var encParam SEncParamExt
+
+	ppEnc.GetDefaultParams(&encParam)
+	encParam.IUsageType = CAMERA_VIDEO_REAL_TIME
+	encParam.FMaxFrameRate = 20
+	encParam.IPicWidth = 1920
+	encParam.IPicHeight = 1080
+	encParam.ITargetBitrate = 1_000_000
+	encParam.IMaxBitrate = 2_000_000
+	encParam.BEnableDenoise = false
+	encParam.ISpatialLayerNum = 1
+	encParam.IMultipleThreadIdc = 5
+
+	encParam.SSpatialLayers[0].IVideoWidth = 1920
+	encParam.SSpatialLayers[0].IVideoHeight = 1080
+	encParam.SSpatialLayers[0].FFrameRate = 20
+	encParam.SSpatialLayers[0].ISpatialBitrate = 1_000_000
+	encParam.SSpatialLayers[0].SSliceArgument.UiSliceMode = SM_FIXEDSLCNUM_SLICE
+	encParam.SSpatialLayers[0].SSliceArgument.UiSliceNum = 8
+
+	if ret := ppEnc.InitializeExt(&encParam); ret != 0 {
+		t.Fatal("InitializeExt 0 !=", ret)
+	}
+	defer ppEnc.Uninitialize()
+	var videoFormat int = VideoFormatI420
+	ppEnc.SetOption(ENCODER_OPTION_DATAFORMAT, &videoFormat)
+
+	encSrcPic := SSourcePicture{
+		IColorFormat: VideoFormatI420,
+		IStride:      [4]int32{},
+		PData:        [4]*uint8{},
+		IPicWidth:    1920,
+		IPicHeight:   1080,
+		UiTimeStamp:  0,
+	}
+	encInfo := SFrameBSInfo{}
+
+	bufbyte := make([]byte, 0, 1000000)
+	buf := bytes.NewBuffer(bufbyte)
+
+	encSrcPic.IStride[0] = 1920
+	encSrcPic.IStride[1] = 960
+	encSrcPic.IStride[2] = 960
+	chunk := []int{}
+	loop := 960
+	loop = 40
+	for i := 0; i < loop; i++ {
+		pinner.Pin(&img.Y[i*2])
+		pinner.Pin(&img.Cb[i])
+		pinner.Pin(&img.Cr[i])
+		encSrcPic.PData[0] = (*uint8)(unsafe.Pointer(&img.Y[i*2]))
+		encSrcPic.PData[1] = (*uint8)(unsafe.Pointer(&img.Cb[i]))
+		encSrcPic.PData[2] = (*uint8)(unsafe.Pointer(&img.Cr[i]))
+		if i == 5 {
+			if r := ppEnc.ForceIntraFrame(true); r != 0 {
+				t.Fatal("ForceIntraFrame", r)
+			}
+		}
+		if ret := ppEnc.EncodeFrame(&encSrcPic, &encInfo); ret != CmResultSuccess {
+			t.Fatalf("ppEnc.EncodeFrame(%d) != CmResultSuccess(%d)", ret, CmResultSuccess)
+		}
+		encInfo.UiTimeStamp += 1000
+		if encInfo.EFrameType != VideoFrameTypeSkip {
+			c := 0
+			for iLayer := 0; iLayer < int(encInfo.ILayerNum); iLayer++ {
+				pLayerBsInfo := &encInfo.SLayerInfo[iLayer]
+				var iLayerSize int32
+				nallens := unsafe.Slice(pLayerBsInfo.PNalLengthInByte, pLayerBsInfo.INalCount)
+				for _, l := range nallens {
+					iLayerSize += l
+				}
+				nals := unsafe.Slice(pLayerBsInfo.PBsBuf, iLayerSize)
+				c += int(iLayerSize)
+				buf.Write(nals)
+			}
+			chunk = append(chunk, c)
+		}
+		if i == 10 {
+			brInfo := SBitrateInfo{}
+			if r := ppEnc.GetOption(ENCODER_OPTION_BITRATE, (*int)(unsafe.Pointer(&brInfo))); r != 0 {
+				t.Fatal("GetOption ENCODER_OPTION_BITRATE", r)
+			}
+			if brInfo.IBitrate != 1_000_000 {
+				t.Fatal("ENCODER_OPTION_BITRATE 1_000_000 != ", brInfo)
+			}
+		}
+	}
+	fh := md5.New()
+	fh.Write(buf.Bytes())
+	h := fmt.Sprintf("%X", fh.Sum(nil))
+
+	switch h {
+	case "1609B3CA097D994915CCF07CDD165330": //40
+	case "A71E9C88C8541A7E2A65723B41BD8276": //960
+		break
+	default:
+		t.Fatal(h)
+	}
+
+	//decoder
+
+	var ppdec *ISVCDecoder
+	if ret := WelsCreateDecoder(&ppdec); ret != 0 || ppdec == nil {
+		log.Fatalln("failed WelsCreateDecoder:", ret, ppdec)
+	}
+	defer WelsDestroyDecoder(ppdec)
+
+	var op int = 0
+	ppdec.SetOption(DECODER_OPTION_TRACE_LEVEL, &op)
+	//multi thread
+	op = 4
+	ppdec.SetOption(DECODER_OPTION_NUM_OF_THREADS, &op)
+
+	sDecParam := SDecodingParam{}
+	sDecParam.EEcActiveIdc = ERROR_CON_SLICE_MV_COPY_CROSS_IDR_FREEZE_RES_CHANGE
+	sDecParam.SVideoProperty.Size = uint32(unsafe.Sizeof(sDecParam.SVideoProperty))
+	sDecParam.SVideoProperty.EVideoBsType = VIDEO_BITSTREAM_DEFAULT
+
+	if r := ppdec.Initialize(&sDecParam); r != 0 {
+		log.Fatalln("failed Initialize.", r)
+	}
+	defer ppdec.Uninitialize()
+	dataoffset := 0
+	src := buf.Bytes()
+	fh2 := md5.New()
+	c := 0
+	for i, l := range chunk {
+		data := src[dataoffset : dataoffset+l]
+		dataoffset += l
+		if len(data) > 0 {
+			var sDstBufInfo SBufferInfo
+			sDstBufInfo.UiInBsTimeStamp = uint64(i)
+			var pDst [3][]byte
+			if r := ppdec.DecodeFrameNoDelay(data, len(data), &pDst, &sDstBufInfo); r != 0 {
+				t.Fatal("decode", r)
+			}
+			if pDst[0] != nil {
+				c++
+				fh2.Write(pDst[0])
+				fh2.Write(pDst[1])
+				fh2.Write(pDst[2])
+
+				// img := &image.YCbCr{
+				// 	Y:       pDst[0],
+				// 	Cb:      pDst[1],
+				// 	Cr:      pDst[2],
+				// 	YStride: int(sDstBufInfo.UsrData_sSystemBuffer().IStride[0]),
+				// 	CStride: int(sDstBufInfo.UsrData_sSystemBuffer().IStride[1]),
+				// 	Rect: image.Rect(
+				// 		0, 0,
+				// 		int(sDstBufInfo.UsrData_sSystemBuffer().IWidth),
+				// 		int(sDstBufInfo.UsrData_sSystemBuffer().IHeight)),
+				// 	SubsampleRatio: image.YCbCrSubsampleRatio420,
+				// }
+				// outname := fmt.Sprintf("img%04d.jpg", sDstBufInfo.UiOutYuvTimeStamp)
+				// fh, err := os.OpenFile(outname, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
+				// if err != nil {
+				// 	log.Fatalln(err)
+				// }
+				// err = jpeg.Encode(fh, img, &jpeg.Options{Quality: 80})
+				// if err != nil {
+				// 	log.Fatalln(err)
+				// }
+				// fh.Close()
+			}
+		}
+
+	}
+
+	var num_of_frames_in_buffer int
+	ppdec.GetOption(DECODER_OPTION_NUM_OF_FRAMES_REMAINING_IN_BUFFER, &num_of_frames_in_buffer)
+	for i := 0; i < num_of_frames_in_buffer; i++ {
+		var sDstBufInfo SBufferInfo
+		var pDst [3][]byte
+		if r := ppdec.FlushFrame(&pDst, &sDstBufInfo); r != 0 {
+			t.Fatal("err", r)
+		}
+		if pDst[0] != nil {
+			c++
+			fh2.Write(pDst[0])
+			fh2.Write(pDst[1])
+			fh2.Write(pDst[2])
+			// img := &image.YCbCr{
+			// 	Y:       pDst[0],
+			// 	Cb:      pDst[1],
+			// 	Cr:      pDst[2],
+			// 	YStride: int(sDstBufInfo.UsrData_sSystemBuffer().IStride[0]),
+			// 	CStride: int(sDstBufInfo.UsrData_sSystemBuffer().IStride[1]),
+			// 	Rect: image.Rect(
+			// 		0, 0,
+			// 		int(sDstBufInfo.UsrData_sSystemBuffer().IWidth),
+			// 		int(sDstBufInfo.UsrData_sSystemBuffer().IHeight)),
+			// 	SubsampleRatio: image.YCbCrSubsampleRatio420,
+			// }
+			// outname := fmt.Sprintf("img%04d.jpg", sDstBufInfo.UiOutYuvTimeStamp)
+			// fh, err := os.OpenFile(outname, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0666)
+			// if err != nil {
+			// 	log.Fatalln(err)
+			// }
+			// err = jpeg.Encode(fh, img, &jpeg.Options{Quality: 80})
+			// if err != nil {
+			// 	log.Fatalln(err)
+			// }
+			// fh.Close()
+		}
+	}
+	h2 := fmt.Sprintf("%X", fh2.Sum(nil))
+	switch h2 {
+	case "D28C5C953FB92DA432EAD8731AA6DE14": //40 multi thread
 	case "D86E18760CD1829B11207EB19739AE32": //40
 	case "49272CBC00A8A62EEC1FF66D093CBF3B": //960
 		break

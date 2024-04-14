@@ -103,8 +103,8 @@ func Example_decode() {
 	}
 	defer ppdec.Uninitialize()
 
-	var sDstBufInfo openh264.SBufferInfo
 	for len(in_h264) > 4 {
+		var sDstBufInfo openh264.SBufferInfo
 		pos := bytes.Index(in_h264[4:], []byte{0, 0, 0, 1})
 		length := len(in_h264)
 		if pos != -1 {
@@ -138,6 +138,7 @@ func Example_decode() {
 	var num_of_frames_in_buffer int
 	ppdec.GetOption(openh264.DECODER_OPTION_NUM_OF_FRAMES_REMAINING_IN_BUFFER, &num_of_frames_in_buffer)
 	for i := 0; i < num_of_frames_in_buffer; i++ {
+		var sDstBufInfo openh264.SBufferInfo
 		var pDst [3][]byte
 		if r := ppdec.FlushFrame(&pDst, &sDstBufInfo); r != 0 {
 			return
